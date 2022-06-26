@@ -21,6 +21,7 @@ from tzlocal import get_localzone
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError, ConnectionClosedOK
 import websockets
 
+from spots import start_parking_spots
 from barriers import start_barriers
 
 from helpers import ParkingEvent, ParkingEventDto, ParkingSpot, MCP23018, Sparkfun7Segment
