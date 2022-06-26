@@ -1,7 +1,19 @@
+import signal
+from time import sleep
 from smbus import SMBus
 from helpers import ParkingEvent, ParkingEventDto, ParkingSpot, MCP23018, Sparkfun7Segment
 
-def start_parking_spots(pipe2: Pipe):
+
+isParkingOpen = True
+
+def handler_stop_signals(signum, frame):
+    global isParkingOpen
+    isParkingOpen = False
+    
+signal.signal(signal.SIGINT, handler_stop_signals)
+signal.signal(signal.SIGTERM, handler_stop_signals)
+
+def start_parking_spots():
     #Initialize I2C Communication Bus.
     #smbus = SMBus(1)
     #Initialize Parking Spots Display.
@@ -10,7 +22,7 @@ def start_parking_spots(pipe2: Pipe):
     #MCP23018.Initialize(smbus)
     #Start Realtime Parking Spot detection.
     try:
-        while True:
+        while isParkingOpen:
             sleep(3)
 
             parkingSpots = MCP23018.getAllParkingSpots()
