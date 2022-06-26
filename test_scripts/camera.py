@@ -34,8 +34,8 @@ picam2.post_callback = camera01_callback
 
 encoder = H264Encoder(1000000)
 
-picam2.encoder.output = FileOutput(stream)
-picam2.start_encoder()
+#picam2.encoder.output = FileOutput(stream)
+#picam2.start_encoder()
 picam2.start()
 
 while True:
