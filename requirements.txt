@@ -44,3 +44,9 @@ smbus
 requests
 asyncio
 picamera2
+python3-libcamera
+python3-kms++
+python3-pyqt5 
+python3-prctl 
+libatlas-base-dev
+ffmpeg

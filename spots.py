@@ -49,7 +49,6 @@ def start_parking_spots():
             Sparkfun7Segment.updateDisplay(totalSpots, totalAvailable)
 
 
-
     except KeyboardInterrupt:
         print('Parking Sensors Process has been TERMINATED!')
     except IOError as error:
