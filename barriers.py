@@ -10,6 +10,10 @@ from picamera2 import Picamera2, Preview, MappedArray
 
 from functools import partial
 
+import pytesseract
+import imutils
+import re
+
 isParkingOpen = True
 
 entrance_boxes, exit_boxes = pd.DataFrame(), pd.DataFrame()
@@ -28,6 +32,8 @@ def entrance_cam_callback(request):
 
 def start_barriers(neuralNet, showPreview: bool):
     try:
+        licensePlateRegex = re.compile(r'([0-9a-zA-Z- ]+)', re.DOTALL)
+
         entrance_cam = Picamera2()
         entrance_cam_config = entrance_cam.video_configuration(main={"format": 'XRGB8888', "size": (1280, 720)}, buffer_count=1)    
         entrance_cam.configure(entrance_cam_config)
@@ -52,8 +58,21 @@ def start_barriers(neuralNet, showPreview: bool):
             results = detection.pandas().xyxy[0]
 
             if len(results) > 0:
-                cropps = pd.DataFrame(results.crop(Save=False))['im']
-                entrance_boxes = pd.DataFrame(results)
+                entrance_boxes = pd.DataFrame(results.head(1))
+                #Preprocessing Stage.
+                cropped = entranceImg[math.floor(entrance_boxes['ymin']):math.floor(entrance_boxes['ymax']), math.floor(entrance_boxes['xmin']):math.floor(entrance_boxes['xmax'])]
+                cropped_resized = imutils.resize(cropped, width=416)
+                cropped_gray = cv2.cvtColor(cropped_resized, cv2.COLOR_BGR2GRAY)
+                cropped_equalized = cv2.equalizeHist(cropped_gray)
+                cropped_denoised = cv2.fastNlMeansDenoising(cropped_equalized, None, 18, 7, 21) 
+                cropped_binary = cv2.threshold(cropped_denoised, 0, 255, cv2.THRESH_OTSU)[1]
+                
+                licensePlateTxt = pytesseract.image_to_string(cropped_binary, lang='eng', config='--psm 7 --oem 3')
+
+                licensePlateMatch = re.search(licensePlateRegex, licensePlateTxt)
+
+                if licensePlateMatch is not None:
+                    print('License Plate is: ', licensePlateMatch.group())
 
         #entrance_cam.stop_encoder()
         entrance_cam.stop()
