@@ -1,2 +1,2 @@
-# Parking-Manager-NN
-The Neural Net for the Hardware of the Parking Manager.
+# Parking-Manager-IOT
+The IOT part of the Parking Manager.
