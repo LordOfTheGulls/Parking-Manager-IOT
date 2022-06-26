@@ -3,7 +3,6 @@ from time import sleep
 from smbus import SMBus
 from helpers import ParkingEvent, ParkingEventDto, ParkingSpot, MCP23018, Sparkfun7Segment
 
-
 isParkingOpen = True
 
 def handler_stop_signals(signum, frame):
@@ -48,7 +47,9 @@ def start_parking_spots():
             
             #pipe2.send(ParkingEventDto(ParkingEvent.Echo_Slot_Status, parkingSpots).__dict__)
             Sparkfun7Segment.updateDisplay(totalSpots, totalAvailable)
-           
+
+
+
     except KeyboardInterrupt:
         print('Parking Sensors Process has been TERMINATED!')
     except IOError as error:

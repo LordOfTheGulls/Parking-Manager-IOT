@@ -9,7 +9,6 @@ import multiprocessing
 import cv2
 import torch
 import os
-from sched import scheduler
 from time import sleep
 from multiprocessing import Process, Pipe
 import warnings

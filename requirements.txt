@@ -3,7 +3,6 @@
 
 # Base ----------------------------------------
 matplotlib>=3.2.2
-numpy>=1.18.5
 opencv-python>=4.1.1
 Pillow>=7.1.2
 PyYAML>=5.3.1
@@ -38,3 +37,10 @@ thop  # FLOPs computation
 # albumentations>=1.0.3
 # pycocotools>=2.0  # COCO mAP
 # roboflow
+apscheduler
+websockets
+tzlocal
+smbus
+requests
+asyncio
+picamera2
