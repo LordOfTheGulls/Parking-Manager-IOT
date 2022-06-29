@@ -6,15 +6,20 @@ from functools import partial
 import json
 import math
 import multiprocessing
+from queue import Queue
 import cv2
+from matplotlib.font_manager import json_dump
 import torch
 import os
 from time import sleep
-from multiprocessing import Process, Pipe
+from multiprocessing import Process, Pipe, Manager
+from multiprocessing.managers import BaseManager
+import psutil, os, time
+
 import warnings
 from zoneinfo import ZoneInfo
 from requests import request
-from smbus import SMBus
+#from smbus import SMBus
 from tzlocal import get_localzone
 
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError, ConnectionClosedOK
@@ -23,36 +28,37 @@ import websockets
 from spots import start_parking_spots
 from barriers import start_barriers
 
-from helpers import ParkingEvent, ParkingEventDto, ParkingSpot, MCP23018, Sparkfun7Segment
+from helpers import SPOT_TYPE, ParkingEvent, ParkingEventDto, ParkingSpot, MCP23018, Sparkfun7Segment, SpotType
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.schedulers.base import Job
 from apscheduler.triggers.combining import OrTrigger, AndTrigger
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.cron import CronTrigger
-
+import copy
 #from watchdog.observers import Observer
 #from watchdog.events import FileSystemEventHandler
 import logging
 
+isOpen: bool = False
+
 # Ignore dateparser warnings regarding pytz
 warnings.filterwarnings("ignore", message="The localize method is no longer necessary, as this time zone supports the fold attribute",)
-#logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO)
 
 async def on_ws_receive(websocket):
     while(True):
         msg_rcv = await websocket.recv()
         print('Received: ', msg_rcv)
 
-def open_parking(process: Process):
-    print('Opening Parking')
-    print(process)
-    process.start()
+def open_parking(processes: list):
+    for proc in processes:
+        proc.start()
 
-def close_parking(process: Process):
-    print('Closing Parking')
-    print(process)
-    process.terminate()
+def close_parking(processes: list):
+    for proc in processes:
+        proc.terminate()
+        proc.join()
 
 def switch_lights(on: bool):
     print('Switch Lights On')
@@ -82,76 +88,97 @@ def schedule_workhours(getLatest: bool = False):
     
     return (OrTrigger(openTriggers), OrTrigger(closeTriggers))
 
+
 async def main():
     API_URL = 'http://192.168.0.150:7156'
-    WS_URL  = 'ws://192.168.0.150:7156/ws'
+
+    WS_URL  = f'ws://192.168.0.150:7156/ws'
+
     TOKEN   = ''
 
-    neuralNet = torch.hub.load(os.getcwd(), 'custom', source='local', path = 'static/yolov5m.onnx')
+    with multiprocessing.Manager() as manager:
+        eventQueue   = manager.Queue()
+        barriers     = manager.dict({ 'entranceIsOpen': False, 'exitIsOpen': False, })
+        parkingSpots = manager.dict({
+             1: manager.dict({'spotTaken': False, 'spotType': 1, 'spotActive': True}),
+             2: manager.dict({'spotTaken': False, 'spotType': 1, 'spotActive': True}),
+             3: manager.dict({'spotTaken': False, 'spotType': 1, 'spotActive': True}),
+             4: manager.dict({'spotTaken': False, 'spotType': 1, 'spotActive': True}),
+             5: manager.dict({'spotTaken': False, 'spotType': 1, 'spotActive': True}),
+             6: manager.dict({'spotTaken': False, 'spotType': 1, 'spotActive': True}),
+             7: manager.dict({'spotTaken': False, 'spotType': 1, 'spotActive': True}),
+             8: manager.dict({'spotTaken': False, 'spotType': 1, 'spotActive': True}),
+             9: manager.dict({'spotTaken': False, 'spotType': 1, 'spotActive': True}),
+            10: manager.dict({'spotTaken': False, 'spotType': 1, 'spotActive': True}),
+            11: manager.dict({'spotTaken': False, 'spotType': 1, 'spotActive': True}),
+            12: manager.dict({'spotTaken': False, 'spotType': 1, 'spotActive': True}),
+            13: manager.dict({'spotTaken': False, 'spotType': 1, 'spotActive': True}),
+            14: manager.dict({'spotTaken': False, 'spotType': 1, 'spotActive': True}),
+            15: manager.dict({'spotTaken': False, 'spotType': 1, 'spotActive': True}),
+            16: manager.dict({'spotTaken': False, 'spotType': 1, 'spotActive': True}),
+        })
 
-    parkingSpotsPipe1, parkingSpotsPipe2 = Pipe()
-
-    #parkingSpotsProcess = Process(target = start_parking_spots, args=(parkingSpotsPipe2,), daemon=True)
-    barriersProcess = Process(target = start_barriers, args=(neuralNet, False, ), daemon=True)
+        mainProcess     = psutil.Process(os.getpid())
+        slotsProcess    = Process(target = start_parking_spots, args=(parkingSpots, eventQueue,), daemon=True)
+        barriersProcess = Process(target = start_barriers,      args=(eventQueue, ),              daemon=True)
     
-    barriersProcess.start()
-    
-    #parkingSpotsProcess.start()
-
-    try:
-        scheduler = BackgroundScheduler(tz=get_localzone())
-
-        (openTriggers, closeTriggers) = schedule_workhours(getLatest=True)
-
-        #openJob  = scheduler.add_job(func=partial(open_parking, parkingSpotsProcess),  trigger=openTriggers, replace_existing=True)
-        #closeJob = scheduler.add_job(func=partial(close_parking, parkingSpotsProcess), trigger=closeTriggers, replace_existing=True)
-  
-        #updateHoursCron = scheduler.add_job(func=partial(schedule_workhours, True), trigger=CronTrigger(year='*',month='*',day_of_week=0,hour=6,minute=0,second=0))
-
-        #scheduler.start(False)
-    except RuntimeError:
-        print('Scheduler Error!')
-
-    async for websocket in websockets.connect(WS_URL):
-        ws_recv_task: Task = None
-
-        #if(not parkingSpotsProcess.is_alive()):
-            #parkingSpotsProcess.start()
-        await asyncio.sleep(10)
-        
-        barriersProcess.terminate()
+        scheduledProcesses = [slotsProcess, barriersProcess]
         
         try:
-            #Create a separate coroutine for the Receiving End in non-blocking manner.
-            ws_recv_task = asyncio.create_task(on_ws_receive(websocket))
+            scheduler = BackgroundScheduler(tz = get_localzone())
 
-            while(True):
-                #print('Emitting From Main Socket')
-                #print(parkingSpotsPipe1.recv())
-                # if parkingSpotsPipe1.poll():
-                #     print(parkingSpotsPipe1.recv())
-                #await websocket.send(2)
-                
-                    #await websocket.send(json.dumps((parkingSpotsPipe2.recv())))
-                # if not parkingSpotsPipe1.closed and parkingSpotsPipe1.poll:
-                #     print(parkingSpotsPipe1.recv())
-                #print(MCP23018.getAllParkingSpots())
-                # if not pipe2.closed and pipe2.poll:          
-                #     await websocket.send(pipe2.recv())
-                await asyncio.sleep(2)
+            (openTriggers, closeTriggers) = schedule_workhours(getLatest=True)
 
-        except(ConnectionRefusedError, ConnectionClosed, ConnectionClosedError, ConnectionClosedOK, ConnectionError):
-            print('Websocket Client Connection has Closed.')
-        except WindowsError as e:
-            print('Critical Error while trying to establish Web Socket connection!')
-        finally:
-            ws_recv_task.cancel()
+            openJob  = scheduler.add_job(func = partial(open_parking,  scheduledProcesses), trigger=openTriggers,  replace_existing=True)
+            closeJob = scheduler.add_job(func = partial(close_parking, scheduledProcesses), trigger=closeTriggers, replace_existing=True)
 
-            await asyncio.sleep(12)
+            #updateHoursCron = scheduler.add_job(func=partial(schedule_workhours, True), trigger=CronTrigger(year='*',month='*',day_of_week=0,hour=6,minute=0,second=0))
+            #scheduler.start(False)
+            slotsProcess.start()
+        except RuntimeError:
+            print('Scheduler Error!')
 
-            print('Attempting Re-connection with Address: ', WS_URL)
+        async for ws in websockets.connect(WS_URL):
+            ws_recv_task: Task = None
 
-            continue
-    
+            parking_metadata = {
+                'name': 'Parking Lot 1',
+                'system_start_time': time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(mainProcess.create_time())),
+                'is_open': isOpen,
+                'gps': dict({ 'lat': 1, 'lon': 2 }),
+                'total_slots': len(parkingSpots),
+            }
+
+            await ws.send(json.dumps(parking_metadata))
+
+            try:
+                #Create a separate coroutine for the Receiving End in non-blocking manner.
+                ws_recv_task = asyncio.create_task(on_ws_receive(ws))
+
+                while(True):
+                    parking_echo = {
+                        'is_open':       isOpen,
+                        'slots_echo':    copy.deepcopy(dict(parkingSpots)),
+                        'barriers_echo': dict(barriers)
+                    }
+                    await ws.send(json.dumps(parking_echo))
+                    await asyncio.sleep(2)
+
+            except(ConnectionRefusedError, ConnectionClosed, ConnectionClosedOK, ConnectionClosedError, ConnectionError):
+                print('Websocket Client Connection has Closed.')
+            except WindowsError as e:
+                print('Critical Error while trying to establish Web Socket connection!', e)
+            except Exception as e:
+                print('Error while trying to establish Web Socket connection! ', e)
+            finally:
+                if(ws_recv_task is not None):
+                    ws_recv_task.cancel()
+
+                await asyncio.sleep(12)
+
+                print('Attempting Re-connection with Address: ', WS_URL)
+
+                continue
+            
 if __name__ == '__main__':
     asyncio.run(main())

@@ -1,9 +1,12 @@
+import asyncio
 from datetime import datetime
 from enum import Enum, IntEnum
 import json
-import psutil
 #from watchdog.events import FileSystemEventHandler
 from collections import namedtuple
+from websockets.exceptions import ConnectionClosed, ConnectionClosedError, ConnectionClosedOK
+import websockets
+import websockets
 
 SPOT_TYPE = namedtuple('SPOT_TYPE', ['typeId', 'RGB_FREE', 'RGB_TAKEN']) 
 
@@ -14,7 +17,7 @@ class SpotType(Enum):
     Handicaped = SPOT_TYPE(typeId = 2, RGB_FREE = (0, 0, 255),     RGB_TAKEN = (0, 255, 0))
     Charging   = SPOT_TYPE(typeId = 3, RGB_FREE = (255, 255, 255), RGB_TAKEN = (0, 255, 0))
     Reserved   = SPOT_TYPE(typeId = 4, RGB_FREE = (255, 255, 0),   RGB_TAKEN = (0, 255, 0))
-    
+
 class ParkingSpot():
     def __init__(self, deviceAddress, registerBit, spotType = SpotType.Default, active = True):
         self.deviceAddress    = deviceAddress
@@ -102,10 +105,10 @@ class MCP23018():
 
     SMBus = None
 
-    parkingSpots = None
+    parkingSpots = dict()
 
     @staticmethod
-    def Initialize(SMBus):
+    def Initialize(parkingSpots: dict, SMBus):
         #Initialize Communication Bus.
         MCP23018.SMBus = SMBus
         #Set GPIO-A Pins Configuration to INPUT for both IO Extenders.
@@ -115,9 +118,9 @@ class MCP23018():
         MCP23018.write_byte_data(MCP23018.IO_01_ADDR, MCP23018.IODIRB, 0x0)
         MCP23018.write_byte_data(MCP23018.IO_02_ADDR, MCP23018.IODIRB, 0x0)
         #Set GPIO-A Pull Up Resistors for both IO Extenders.
-        MCP23018.write_byte_data(MCP23018.IO_01_ADDR, MCP23018.GPIOAPU, 0xFF)
-        MCP23018.write_byte_data(MCP23018.IO_02_ADDR, MCP23018.GPIOAPU, 0xFF)
-        #Set GPIO-A Pull Up Resistors for both IO Extenders.
+        #MCP23018.write_byte_data(MCP23018.IO_01_ADDR, MCP23018.GPIOAPU, 0xFF)
+        #MCP23018.write_byte_data(MCP23018.IO_02_ADDR, MCP23018.GPIOAPU, 0xFF)
+        #Set GPIO-B Pull Up Resistors for both IO Extenders.
         #MCP23018.write_byte_data(MCP23018.IO_01_ADDR, MCP23018.GPIOBPU, 0x0)
         #MCP23018.write_byte_data(MCP23018.IO_02_ADDR, MCP23018.GPIOBPU, 0x0)
         #Set GPIO-B Pins to On.
@@ -127,24 +130,14 @@ class MCP23018():
         #MCP23018.write_byte_data(MCP23018.IO_01_ADDR, MCP23018.IPOLA, 0xFF)
         #MCP23018.write_byte_data(MCP23018.IO_02_ADDR, MCP23018.IPOLA, 0xFF)
         #Initialize ParkingSpots by mapping them to the correct Bit and IO-Expander.
-        MCP23018.parkingSpots = {
-            1  : ParkingSpot(MCP23018.IO_02_ADDR, 1, SpotType.Default, True),
-            2  : ParkingSpot(MCP23018.IO_02_ADDR, 2, SpotType.Default, True),
-            3  : ParkingSpot(MCP23018.IO_02_ADDR, 3, SpotType.Default, True),
-            4  : ParkingSpot(MCP23018.IO_02_ADDR, 4, SpotType.Default, True),
-            5  : ParkingSpot(MCP23018.IO_02_ADDR, 5, SpotType.Default, True),
-            # 6  : ParkingSpot(MCP23018.IO_01_ADDR, 6, SpotType.Default, True),
-            # 7  : ParkingSpot(MCP23018.IO_01_ADDR, 7, SpotType.Default, True),
-            # 8  : ParkingSpot(MCP23018.IO_01_ADDR, 8, SpotType.Default, True),
-            # 9  : ParkingSpot(MCP23018.IO_02_ADDR, 1, SpotType.Default, True),
-            # 10 : ParkingSpot(MCP23018.IO_02_ADDR, 2, SpotType.Default, True),
-            # 11 : ParkingSpot(MCP23018.IO_02_ADDR, 3, SpotType.Default, True),
-            # 12 : ParkingSpot(MCP23018.IO_02_ADDR, 4, SpotType.Default, True),
-            # 13 : ParkingSpot(MCP23018.IO_02_ADDR, 5, SpotType.Default, True),
-            # 14 : ParkingSpot(MCP23018.IO_02_ADDR, 6, SpotType.Default, True),
-            # 15 : ParkingSpot(MCP23018.IO_02_ADDR, 7, SpotType.Default, True),
-            # 16 : ParkingSpot(MCP23018.IO_02_ADDR, 8, SpotType.Default, True),
-        }
+        
+        for idx, spotId in enumerate(parkingSpots.keys()):
+            if idx >= 7:
+                MCP23018.parkingSpots.update({spotId: ParkingSpot(MCP23018.IO_01_ADDR, (idx + 1) % 8, SpotType.Default, parkingSpots[spotId]['spotActive'])})
+            else:
+                MCP23018.parkingSpots.update({spotId: ParkingSpot(MCP23018.IO_02_ADDR, (idx + 1) % 8, SpotType.Default, parkingSpots[spotId]['spotActive'])})
+       
+        print(MCP23018.parkingSpots[1])
 
     @staticmethod
     def getAllParkingSpots():
@@ -157,7 +150,7 @@ class MCP23018():
     @staticmethod
     def isSpotActive(spotId: int):
         if spotId in MCP23018.parkingSpots:
-            parkingSpot: ParkingSpot = MCP23018.parkingSpots[spotId]
+            parkingSpot = MCP23018.parkingSpots[spotId]
 
             byte_value = MCP23018.SMBus.read_byte_data(parkingSpot.deviceAddress, MCP23018.OLATB)
 
@@ -168,7 +161,7 @@ class MCP23018():
     @staticmethod
     def isSpotTaken(spotId: int):
         if spotId in MCP23018.parkingSpots:
-            parkingSpot: ParkingSpot = MCP23018.parkingSpots[spotId]
+            parkingSpot = MCP23018.parkingSpots[spotId]
 
             byte_value = MCP23018.read_byte_data(parkingSpot.deviceAddress, MCP23018.GPIOA)
             
@@ -212,16 +205,16 @@ class MCP23018():
 #     def on_deleted(self, event):
 #         pass
 
-def checkIfProcessRunning(processName):
-    #Iterate over the all the running process
-    for proc in psutil.process_iter():
-        try:
-            # Check if process name contains the given name string.
-            if processName.lower() in proc.name().lower():
-                return True
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            pass
-    return False
+# def checkIfProcessRunning(processName):
+#     #Iterate over the all the running process
+#     for proc in psutil.process_iter():
+#         try:
+#             # Check if process name contains the given name string.
+#             if processName.lower() in proc.name().lower():
+#                 return True
+#         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+#             pass
+#     return False
 
 class ParkingEvent(IntEnum):
     System_Live              = 1,
@@ -249,3 +242,48 @@ class ParkingEventDto:
 
     def toJSON(self):
         return json.dumps(self.__dict__, default=str, sort_keys=True, indent=4)
+
+class Parking:
+    isOpened   = False,
+    totalSpots = 0,
+    totalFree  = 0,
+
+
+class WebSocketClient(object):
+    subscribers = None
+
+    def __init__(self):
+        self.conn = None
+
+    async def connect(self, ws_url):
+        async for websocket in websockets.connect(ws_url):
+            self.websocket = websocket
+            ws_recv_task: asyncio.Task = None
+            try:
+                #Create a separate coroutine for the Receiving End in non-blocking manner.
+                ws_recv_task = asyncio.create_task(self.receive(websocket))
+            except(ConnectionRefusedError, ConnectionClosed, ConnectionClosedError, ConnectionError):
+                print('Websocket Client Connection has Closed Unexpectedly.')
+            except WindowsError as e:
+                print('Critical Error while trying to establish Web Socket connection!')
+            finally:
+                #ws_recv_task.cancel()
+                await asyncio.sleep(12)
+                print('Attempting Re-connection with Address: ', ws_url)
+                continue
+        return self.websocket
+
+    async def send(self, msg):
+        await self.websocket.send(msg)
+
+    async def receive_handler(self):
+        while(True):
+            msg = await self.websocket.recv()
+            for subscriber in len(self.subscribers):
+                subscriber(msg)
+
+    def subscribe(self, callback):
+        self.subscribers.append(callback)
+
+    async def close_connection(self):
+        await self.websocket.close()

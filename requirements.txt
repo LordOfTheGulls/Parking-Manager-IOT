@@ -53,3 +53,4 @@ ffmpeg
 pyyaml
 pytesseract
 imutils
+grpcio-tools
